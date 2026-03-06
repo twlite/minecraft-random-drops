@@ -1,7 +1,7 @@
 import {
   type PluginContext,
-  Event,
   type SpigotEventType,
+  Event,
   Command,
   Autocomplete,
   chalk,
@@ -19,6 +19,7 @@ const BLACKLISTED_MATERIALS = [
   'knowledge_book',
   'legacy_',
 ];
+const MAX_RANDOM_DROPS = 4096;
 
 class RandomDrops {
   private isEnabled = false;
@@ -101,7 +102,7 @@ class RandomDrops {
     if (!drops.length) return;
 
     const randomMaterial = this.getRandomMaterial(block.getType());
-    const dropAmount = Math.floor(Math.random() * 1024) + 1;
+    const dropAmount = Math.floor(Math.random() * MAX_RANDOM_DROPS) + 1;
     const stack = new ItemStack(randomMaterial, dropAmount);
 
     block.getWorld().dropItemNaturally(block.getLocation(), stack);
