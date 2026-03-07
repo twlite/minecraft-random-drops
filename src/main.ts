@@ -6,10 +6,14 @@ import {
   Autocomplete,
   chalk,
 } from 'ecmacraft';
-import { CommandSender, ItemStack, Material } from 'ecmacraft/spigot';
+import {
+  CommandSender,
+  EntityType,
+  ItemStack,
+  Material,
+} from 'ecmacraft/spigot';
 
 const BLACKLISTED_MATERIALS = [
-  'spawn_egg',
   'air',
   'barrier',
   'command_block',
@@ -20,6 +24,7 @@ const BLACKLISTED_MATERIALS = [
   'legacy_',
 ];
 const MAX_RANDOM_DROPS = 4096;
+const MAX_MOB_SPAWN = 20;
 
 class RandomDrops {
   private isEnabled = false;
@@ -102,10 +107,38 @@ class RandomDrops {
     if (!drops.length) return;
 
     const randomMaterial = this.getRandomMaterial(block.getType());
-    const dropAmount = Math.floor(Math.random() * MAX_RANDOM_DROPS) + 1;
-    const stack = new ItemStack(randomMaterial, dropAmount);
+    const isSpawnEgg = randomMaterial
+      // @ts-ignore
+      .name()
+      .toLowerCase()
+      .includes('spawn_egg');
 
-    block.getWorld().dropItemNaturally(block.getLocation(), stack);
+    if (isSpawnEgg) {
+      // @ts-ignore
+      const materialName: string = randomMaterial.name().toLowerCase();
+      const entityTypeName = materialName
+        .replace('_spawn_egg', '')
+        .toUpperCase();
+
+      const entityType = EntityType[entityTypeName as keyof typeof EntityType];
+
+      if (!entityType) {
+        console.error(`EntityType not found: ${entityTypeName}`);
+        return;
+      }
+
+      const dropAmount = Math.floor(Math.random() * MAX_MOB_SPAWN) + 1;
+
+      for (let i = 0; i < dropAmount; i++) {
+        block
+          .getWorld()
+          .spawnEntity(block.getLocation(), entityType as EntityType);
+      }
+    } else {
+      const dropAmount = Math.floor(Math.random() * MAX_RANDOM_DROPS) + 1;
+      const stack = new ItemStack(randomMaterial, dropAmount);
+      block.getWorld().dropItemNaturally(block.getLocation(), stack);
+    }
   }
 
   private getRandomMaterial(blockType: Material) {
