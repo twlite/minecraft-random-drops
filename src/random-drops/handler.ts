@@ -96,10 +96,14 @@ export class RandomDropsHandler {
   @Event('BlockBreakEvent')
   public onBlockBreakEvent(event: SpigotEventType<'BlockBreakEvent'>) {
     if (!this.isEnabled) return;
-    if (!event.getPlayer()) return;
+
+    const player = event.getPlayer();
+    if (!player) return;
 
     const block = event.getBlock();
-    const drops = block.getDrops();
+    const tool = player.getInventory().getItemInMainHand();
+    // Supplying the held item makes the server enforce tool and harvest-tier rules.
+    const drops = block.getDrops(tool);
 
     event.setDropItems(false);
 
