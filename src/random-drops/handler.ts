@@ -105,7 +105,7 @@ export class RandomDropsHandler {
     const block = event.getBlock();
     const tool = player.getInventory().getItemInMainHand();
     // Supplying the held item makes the server enforce tool and harvest-tier rules.
-    const drops = block.getDrops(tool);
+    const drops = tool ? block.getDrops(tool) : block.getDrops();
 
     event.setDropItems(false);
 
