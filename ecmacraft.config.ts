@@ -4,7 +4,7 @@ export default defineConfig({
   development: {
     paperVersion: '26.2',
     serverProperties: {
-      'online-mode': false,
+      'online-mode': true,
       'spawn-protection': 0
     }
   },

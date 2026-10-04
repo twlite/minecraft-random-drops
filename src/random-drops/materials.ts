@@ -1,28 +1,37 @@
 import { EntityType, Material } from 'ecmacraft/spigot';
-import { BLACKLISTED_MATERIALS } from './constants.js';
+import { BLACKLISTED_MATERIALS, CURSED_CHANCE } from './constants.js';
 
-type JavaSecureRandom = {
+type JavaRandom = {
   nextInt(bound: number): number;
+  nextLong(): number;
+  nextDouble(): number;
+  setSeed(seed: number): void;
 };
 
-type JavaSecureRandomClass = new () => JavaSecureRandom;
+type JavaRandomClass = new (seed: number) => JavaRandom;
 
 type ProgressionSource =
   | { kind: 'block'; value: Material }
   | { kind: 'entity'; value: EntityType };
 
-const SecureRandom = Java.type<JavaSecureRandomClass>(
-  'java.security.SecureRandom',
-);
+const Random = Java.type<JavaRandomClass>('java.util.Random');
 
 export class MaterialResolver {
-  private static readonly RANDOM = new SecureRandom();
+  private readonly random: JavaRandom;
+  private readonly cursedRandom: JavaRandom;
   private blockToMaterialMap = new Map<Material, Material>();
   private entityToMaterialMap = new Map<EntityType, Material>();
   private materialList: Material[] | null = null;
   private materialDeck: Material[] = [];
   private reservedMaterials = new Set<Material>();
   private progressionInitialized = false;
+  private cursedItems: Material[] = [];
+  private cursedSpawnEggs: Material[] = [];
+
+  public constructor(private readonly seed: number) {
+    this.random = new Random(seed);
+    this.cursedRandom = new Random(this.random.nextLong());
+  }
 
   public clearCache() {
     this.blockToMaterialMap.clear();
@@ -31,6 +40,10 @@ export class MaterialResolver {
     this.materialDeck = [];
     this.reservedMaterials.clear();
     this.progressionInitialized = false;
+    this.cursedItems = [];
+    this.cursedSpawnEggs = [];
+    this.random.setSeed(this.seed);
+    this.cursedRandom.setSeed(this.random.nextLong());
   }
 
   public getRandomMaterialForBlock(blockType: Material) {
@@ -64,6 +77,18 @@ export class MaterialResolver {
     return this.drawMaterial();
   }
 
+  public getCursedBonus(normalMaterial: Material): Material | null {
+    this.ensureProgressionMappings();
+    if (this.cursedRandom.nextDouble() >= CURSED_CHANCE) return null;
+
+    const choices = this.isSpawnEgg(normalMaterial)
+      ? this.cursedItems
+      : this.cursedSpawnEggs;
+
+    if (choices.length === 0) return null;
+    return choices[this.cursedRandom.nextInt(choices.length)];
+  }
+
   public isSpawnEgg(material: Material) {
     return this.getMaterialName(material).includes('spawn_egg');
   }
@@ -73,13 +98,11 @@ export class MaterialResolver {
       .replace('_spawn_egg', '')
       .toUpperCase();
 
-    return EntityType[entityTypeName as keyof typeof EntityType] ?? null;
+    return (EntityType[entityTypeName as keyof typeof EntityType] as EntityType | undefined) ?? null;
   }
 
   private ensureProgressionMappings() {
     if (this.progressionInitialized) return;
-
-    this.progressionInitialized = true;
 
     const earlySources = this.shuffle<ProgressionSource>([
       { kind: 'block', value: Material.DIRT },
@@ -126,6 +149,34 @@ export class MaterialResolver {
     this.assignProgressionDrops(netherSources, [Material.BLAZE_ROD]);
 
     this.refillMaterialDeck();
+
+    // Assign every source before gameplay so discovery order cannot change its drop.
+    const blocks = this.sortByName(
+      Material.values().filter(
+        (material) => !material.isLegacy() && material.isBlock(),
+      ),
+    );
+    for (const block of blocks) {
+      if (!this.blockToMaterialMap.has(block)) {
+        this.blockToMaterialMap.set(block, this.drawMaterial());
+      }
+    }
+
+    for (const entity of this.sortByName(EntityType.values())) {
+      if (!this.entityToMaterialMap.has(entity)) {
+        this.entityToMaterialMap.set(entity, this.drawMaterial());
+      }
+    }
+
+    this.cursedItems = this.getMaterialList().filter(
+      (material) => !this.isSpawnEgg(material),
+    );
+    this.cursedSpawnEggs = this.getMaterialList().filter((material) => {
+      if (!this.isSpawnEgg(material)) return false;
+      const entityType = this.getEntityTypeFromSpawnEgg(material);
+      return entityType !== null && entityType.isAlive() && entityType.isSpawnable();
+    });
+    this.progressionInitialized = true;
   }
 
   private assignProgressionDrops(
@@ -208,16 +259,18 @@ export class MaterialResolver {
 
   private getMaterialList() {
     if (!this.materialList) {
-      this.materialList = Material.values().filter((material) => {
-        if (material.isLegacy()) return false;
-        if (!material.isItem()) return false;
+      this.materialList = this.sortByName(
+        Material.values().filter((material) => {
+          if (material.isLegacy()) return false;
+          if (!material.isItem()) return false;
 
-        const name = this.getMaterialName(material);
+          const name = this.getMaterialName(material);
 
-        return !BLACKLISTED_MATERIALS.some((blacklisted) =>
-          name.includes(blacklisted),
-        );
-      });
+          return !BLACKLISTED_MATERIALS.some((blacklisted) =>
+            name.includes(blacklisted),
+          );
+        }),
+      );
     }
 
     return this.materialList;
@@ -226,6 +279,14 @@ export class MaterialResolver {
   private getMaterialName(material: Material) {
     // @ts-ignore - Spigot enum wrappers expose name() at runtime.
     return (material.name() as string).toLowerCase();
+  }
+
+  private sortByName<T>(values: T[]): T[] {
+    return [...values].sort((a, b) => {
+      const left = String(a);
+      const right = String(b);
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
   }
 
   private getRandomItem<T>(items: readonly T[]) {
@@ -252,6 +313,6 @@ export class MaterialResolver {
       throw new Error('Cannot pick a random material from an empty list.');
     }
 
-    return MaterialResolver.RANDOM.nextInt(length);
+    return this.random.nextInt(length);
   }
 }

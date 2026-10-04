@@ -25,7 +25,7 @@ import { DropScaler } from './drop-scaler.js';
 export class RandomDropsHandler {
   private isEnabled = false;
   private readonly scaler: DropScaler;
-  private readonly materialResolver = new MaterialResolver();
+  private readonly materialResolvers = new Map<string, MaterialResolver>();
 
   public constructor(ctx: PluginContext) {
     this.scaler = new DropScaler(ctx);
@@ -34,7 +34,7 @@ export class RandomDropsHandler {
   public destroy() {
     this.isEnabled = false;
     this.scaler.stop();
-    this.materialResolver.clearCache();
+    this.materialResolvers.clear();
   }
 
   @Command('randomdrops')
@@ -60,10 +60,11 @@ export class RandomDropsHandler {
         }
 
         this.isEnabled = true;
+        this.materialResolvers.clear();
         this.scaler.start();
         this.scaler.schedule(SCALE_INTERVAL_MS, MAX_RANDOM_DROPS);
         sender.sendMessage(
-          chalk.green`Random drops enabled! Multiplier starts at 1 and doubles every 2 minutes.`,
+          chalk.green`Random drops enabled with cursed bonuses! Multiplier starts at 1 and doubles every ${SCALE_INTERVAL_MS / 60000} minutes.`,
         );
         return true;
       case 'off':
@@ -96,6 +97,7 @@ export class RandomDropsHandler {
   @Event('BlockBreakEvent')
   public onBlockBreakEvent(event: SpigotEventType<'BlockBreakEvent'>) {
     if (!this.isEnabled) return;
+    if (event.isCancelled()) return;
 
     const player = event.getPlayer();
     if (!player) return;
@@ -109,13 +111,16 @@ export class RandomDropsHandler {
 
     if (!drops.length) return;
 
-    const randomMaterial = this.materialResolver.getRandomMaterialForBlock(
+    const world = block.getWorld();
+    const resolver = this.getMaterialResolver(world);
+    const randomMaterial = resolver.getRandomMaterialForBlock(
       block.getType(),
     );
 
-    this.spawnRandomOutcome(
+    this.spawnRandomOutcomes(
       randomMaterial,
-      block.getWorld(),
+      resolver,
+      world,
       block.getLocation(),
     );
   }
@@ -135,13 +140,16 @@ export class RandomDropsHandler {
     event.getDrops().clear();
     event.setDroppedExp(0);
 
-    const randomMaterial = this.materialResolver.getRandomMaterialForEntity(
+    const world = entity.getWorld();
+    const resolver = this.getMaterialResolver(world);
+    const randomMaterial = resolver.getRandomMaterialForEntity(
       entity.getType(),
     );
 
-    this.spawnRandomOutcome(
+    this.spawnRandomOutcomes(
       randomMaterial,
-      entity.getWorld(),
+      resolver,
+      world,
       entity.getLocation(),
     );
   }
@@ -157,14 +165,39 @@ export class RandomDropsHandler {
     event.setCancelled(true);
   }
 
-  private spawnRandomOutcome(
+  private getMaterialResolver(world: World) {
+    const seed = world.getSeed();
+    const key = String(seed);
+    let resolver = this.materialResolvers.get(key);
+    if (!resolver) {
+      resolver = new MaterialResolver(seed);
+      this.materialResolvers.set(key, resolver);
+    }
+    return resolver;
+  }
+
+  private spawnRandomOutcomes(
     randomMaterial: Material,
+    resolver: MaterialResolver,
     world: World,
     location: Location,
   ) {
-    if (this.materialResolver.isSpawnEgg(randomMaterial)) {
+    this.spawnRandomOutcome(randomMaterial, resolver, world, location);
+
+    // One roll per break/kill, not per scaled item or mob. Bonuses never recurse.
+    const bonus = resolver.getCursedBonus(randomMaterial);
+    if (bonus) this.spawnRandomOutcome(bonus, resolver, world, location);
+  }
+
+  private spawnRandomOutcome(
+    randomMaterial: Material,
+    resolver: MaterialResolver,
+    world: World,
+    location: Location,
+  ) {
+    if (resolver.isSpawnEgg(randomMaterial)) {
       const entityType =
-        this.materialResolver.getEntityTypeFromSpawnEgg(randomMaterial);
+        resolver.getEntityTypeFromSpawnEgg(randomMaterial);
 
       if (!entityType) {
         console.error(
